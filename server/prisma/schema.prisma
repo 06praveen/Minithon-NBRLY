@@ -1,0 +1,159 @@
+// NBRLY PostgreSQL Prisma Schema
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RequestStatus {
+  OPEN
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum Urgency {
+  URGENT
+  TODAY
+  FLEXIBLE
+}
+
+enum AssignmentStatus {
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ActivityType {
+  HELP_COMPLETED
+  HELP_ACCEPTED
+  REQUEST_CREATED
+  MEMBER_JOINED
+}
+
+model User {
+  id                String       @id @default(uuid())
+  name              String
+  email             String       @unique
+  passwordHash      String
+  avatar            String?
+  neighborhood      String
+  bio               String       @default("")
+  rating            Float        @default(5.0)
+  completedHelps    Int          @default(0)
+  createdHelpsCount Int          @default(0)
+  skills            String[]     @default([])
+  joinedAt          String       @default("Oct 2026")
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relationships
+  requestsCreated   HelpRequest[] @relation("UserRequests")
+  assignments       Assignment[]  @relation("UserAssignments")
+  reviewsGiven      Review[]      @relation("ReviewsGiven")
+  reviewsReceived   Review[]      @relation("ReviewsReceived")
+  badges            UserBadge[]
+
+  @@map("users")
+}
+
+model HelpRequest {
+  id            String        @id @default(uuid())
+  title         String
+  description   String
+  category      String
+  urgency       Urgency       @default(FLEXIBLE)
+  neighborhood  String
+  preferredDate String
+  preferredTime String
+  reward        String?
+  status        RequestStatus @default(OPEN)
+  requesterId   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relationships
+  requester     User          @relation("UserRequests", fields: [requesterId], references: [id], onDelete: Cascade)
+  assignment    Assignment?
+  reviews       Review[]
+
+  @@map("help_requests")
+}
+
+model Assignment {
+  id          String           @id @default(uuid())
+  requestId   String           @unique
+  helperId    String
+  status      AssignmentStatus @default(ACCEPTED)
+  acceptedAt  DateTime         @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // Relationships
+  request     HelpRequest      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  helper      User             @relation("UserAssignments", fields: [helperId], references: [id], onDelete: Cascade)
+
+  @@map("assignments")
+}
+
+model Review {
+  id          String      @id @default(uuid())
+  requestId   String
+  reviewerId  String
+  revieweeId  String
+  rating      Int
+  comment     String
+  createdAt   DateTime    @default(now())
+
+  // Relationships
+  request     HelpRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  reviewer    User        @relation("ReviewsGiven", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewee    User        @relation("ReviewsReceived", fields: [revieweeId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}
+
+model Badge {
+  id          String      @id @default(uuid())
+  code        String      @unique
+  name        String
+  description String
+  icon        String
+  createdAt   DateTime    @default(now())
+
+  // Relationships
+  users       UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(uuid())
+  userId    String
+  badgeId   String
+  earnedAt  DateTime @default(now())
+
+  // Relationships
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge     Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model CommunityActivity {
+  id           String       @id @default(uuid())
+  type         ActivityType
+  userName     String
+  targetName   String?
+  requestTitle String?
+  timestamp    String
+  createdAt    DateTime     @default(now())
+
+  @@map("community_activities")
+}
