@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../config/db.js';
 import { ENV } from '../config/env.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { LocationService } from './location.service.js';
 
 export class AuthService {
   static async register(data: {
@@ -10,6 +11,9 @@ export class AuthService {
     email: string;
     password: string;
     neighborhood: string;
+    locationName?: string;
+    latitude?: number;
+    longitude?: number;
     bio?: string;
     skills?: string[];
     avatar?: string;
@@ -24,12 +28,31 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(data.password, 10);
 
+    // Geocode user location to ensure locationName, latitude, and longitude are always strictly synchronized
+    let locationInput = (data.locationName || data.neighborhood || '').trim();
+    let locationName = locationInput;
+    let latitude = data.latitude ?? null;
+    let longitude = data.longitude ?? null;
+
+    if (latitude === null || longitude === null) {
+      const geocoded = await LocationService.geocode(locationInput);
+      if (!geocoded) {
+        throw new AppError("Couldn't find that location. Try entering a nearby area or neighborhood.", 400);
+      }
+      locationName = geocoded.locationName;
+      latitude = geocoded.latitude;
+      longitude = geocoded.longitude;
+    }
+
     const user = await prisma.user.create({
       data: {
         name: data.name.trim(),
         email: data.email.toLowerCase().trim(),
         passwordHash,
-        neighborhood: data.neighborhood.trim(),
+        neighborhood: locationName,
+        locationName,
+        latitude,
+        longitude,
         bio: data.bio || '',
         skills: data.skills || [],
         avatar: data.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(data.name)}`,
@@ -43,6 +66,9 @@ export class AuthService {
         name: true,
         email: true,
         neighborhood: true,
+        locationName: true,
+        latitude: true,
+        longitude: true,
         bio: true,
         skills: true,
         avatar: true,
@@ -98,6 +124,9 @@ export class AuthService {
       email: user.email,
       avatar: user.avatar,
       neighborhood: user.neighborhood,
+      locationName: user.locationName,
+      latitude: user.latitude,
+      longitude: user.longitude,
       bio: user.bio,
       rating: user.rating,
       completedHelps: user.completedHelps,
@@ -138,6 +167,9 @@ export class AuthService {
       email: user.email,
       avatar: user.avatar,
       neighborhood: user.neighborhood,
+      locationName: user.locationName,
+      latitude: user.latitude,
+      longitude: user.longitude,
       bio: user.bio,
       rating: user.rating,
       completedHelps: user.completedHelps,

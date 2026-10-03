@@ -329,11 +329,13 @@ export const Home: React.FC = () => {
             </p>
           </div>
 
-          <Link to="/explore">
-            <Button variant="secondary" size="sm">
-              EXPLORE ALL REQUESTS <ArrowRight className="w-4 h-4" />
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to="/explore">
+              <Button variant="secondary" size="sm">
+                EXPLORE ALL <ArrowRight className="w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

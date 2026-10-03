@@ -1,6 +1,7 @@
 import { prisma } from '../config/db.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { UserBadgeService } from './user.service.js';
+import { NotificationService } from './notification.service.js';
 
 export class ReviewService {
   static async createReview(userId: string, requestId: string, data: { rating: number; comment: string }) {
@@ -70,6 +71,11 @@ export class ReviewService {
     // Re-evaluate badges in case rating threshold was reached
     await UserBadgeService.evaluateBadges(updatedUser);
 
+    // Resolve review pending notification
+    NotificationService.resolveReviewNotification(userId, requestId).catch((err) => {
+      console.error('Failed to resolve review notification:', err);
+    });
+
     return {
       id: review.id,
       rating: review.rating,
@@ -78,5 +84,29 @@ export class ReviewService {
       reviewerAvatar: review.reviewer.avatar,
       createdAt: review.createdAt.toISOString(),
     };
+  }
+
+  static async getReviewsByRequest(requestId: string) {
+    const reviews = await prisma.review.findMany({
+      where: { requestId },
+      include: {
+        reviewer: { select: { id: true, name: true, avatar: true } },
+        reviewee: { select: { id: true, name: true, avatar: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return reviews.map((r) => ({
+      id: r.id,
+      requestId: r.requestId,
+      reviewerId: r.reviewerId,
+      reviewerName: r.reviewer.name,
+      reviewerAvatar: r.reviewer.avatar,
+      revieweeId: r.revieweeId,
+      revieweeName: r.reviewee.name,
+      rating: r.rating,
+      comment: r.comment,
+      createdAt: r.createdAt.toISOString(),
+    }));
   }
 }

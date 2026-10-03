@@ -5,6 +5,7 @@ import { Home } from '../pages/Home';
 import { Explore } from '../pages/Explore';
 import { CreateRequest } from '../pages/CreateRequest';
 import { Activity } from '../pages/Activity';
+import { Inbox } from '../pages/Inbox';
 import { Profile } from '../pages/Profile';
 import { RequestDetails } from '../pages/RequestDetails';
 import { Login } from '../pages/Login';
@@ -23,6 +24,14 @@ export const AppRoutes: React.FC = () => {
         <Route path="/register" element={<Register />} />
         
         {/* Protected user routes */}
+        <Route
+          path="/inbox"
+          element={
+            <ProtectedRoute>
+              <Inbox />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/create"
           element={

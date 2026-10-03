@@ -81,7 +81,12 @@ export const RequestCard: React.FC<RequestCardProps> = ({
           </div>
           <div className="flex items-center gap-1">
             <MapPin className="w-3.5 h-3.5 text-muted-gray" />
-            <span className="font-semibold text-charcoal">{request.neighborhood}</span>
+            <span className="font-semibold text-charcoal">
+              {request.neighborhood}
+              {request.distanceKm !== undefined && (
+                <span className="text-muted-gray font-normal"> · {request.distanceKm} km away</span>
+              )}
+            </span>
           </div>
         </div>
 

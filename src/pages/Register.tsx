@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
-import { ArrowRight, Lock, Mail, User as UserIcon, MapPin, AlertCircle, Plus, X } from 'lucide-react';
+import { ArrowRight, Lock, Mail, User as UserIcon, MapPin, AlertCircle, Plus } from 'lucide-react';
 
 const COMMON_SKILLS = [
   'Technology',
@@ -24,7 +24,7 @@ export const Register: React.FC = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [neighborhood, setNeighborhood] = useState('Bandra West');
+  const [neighborhood, setNeighborhood] = useState('');
   const [bio, setBio] = useState('');
   const [skills, setSkills] = useState<string[]>(['Technology', 'Errands']);
   const [customSkill, setCustomSkill] = useState('');
@@ -152,22 +152,20 @@ export const Register: React.FC = () => {
 
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-muted-gray block mb-1.5">
-              Neighborhood / Area
+              Location
             </label>
             <div className="relative">
               <MapPin className="w-4 h-4 text-muted-gray absolute left-3 top-3" />
-              <select
+              <input
+                type="text"
+                required
                 value={neighborhood}
                 onChange={(e) => setNeighborhood(e.target.value)}
+                placeholder="e.g. Bandra West, Mumbai"
                 className="w-full pl-9 pr-3 py-2 text-sm border border-nbrly-border rounded-button bg-paper text-charcoal focus:outline-none focus:border-charcoal transition-colors font-sans"
-              >
-                <option value="Bandra West">Bandra West (Pali Hill, Hill Rd, Carter Rd)</option>
-                <option value="Bandra East">Bandra East (Kalanagar, BKC)</option>
-                <option value="Khar West">Khar West (Linking Rd, 14th Rd)</option>
-                <option value="Santacruz West">Santacruz West</option>
-                <option value="Andheri West">Andheri West</option>
-              </select>
+              />
             </div>
+            <p className="text-[11px] text-muted-gray mt-1">Enter your neighborhood or area (e.g. Bandra West, Andheri East, Powai, Thane West).</p>
           </div>
 
           <div>

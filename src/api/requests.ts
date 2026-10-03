@@ -7,6 +7,9 @@ export interface CreateRequestPayload {
   category: string;
   urgency: 'URGENT' | 'TODAY' | 'FLEXIBLE';
   neighborhood: string;
+  locationName?: string;
+  latitude?: number;
+  longitude?: number;
   preferredDate: string;
   preferredTime: string;
   reward?: string;
@@ -18,6 +21,10 @@ export interface RequestFilterParams {
   urgency?: string;
   neighborhood?: string;
   status?: string;
+  lat?: number;
+  lng?: number;
+  radius?: number;
+  sortBy?: 'nearest' | 'recommended' | 'urgent' | 'newest';
 }
 
 export const requestsApi = {
@@ -58,13 +65,43 @@ export const requestsApi = {
     return res.data.data.request;
   },
 
-  async complete(id: string): Promise<HelpRequest> {
-    const res = await apiClient.post<{ success: boolean; data: { request: HelpRequest } }>(`/requests/${id}/complete`);
+  async requestCompletion(id: string): Promise<HelpRequest> {
+    const res = await apiClient.post<{ success: boolean; data: { request: HelpRequest } }>(`/requests/${id}/request-completion`);
     return res.data.data.request;
   },
 
+  async confirmCompletion(id: string): Promise<HelpRequest> {
+    const res = await apiClient.post<{ success: boolean; data: { request: HelpRequest } }>(`/requests/${id}/confirm-completion`);
+    return res.data.data.request;
+  },
+
+  async rejectCompletion(id: string): Promise<HelpRequest> {
+    const res = await apiClient.post<{ success: boolean; data: { request: HelpRequest } }>(`/requests/${id}/reject-completion`);
+    return res.data.data.request;
+  },
+
+  async complete(id: string): Promise<HelpRequest> {
+    const res = await apiClient.post<{ success: boolean; data: { request: HelpRequest } }>(`/requests/${id}/confirm-completion`);
+    return res.data.data.request;
+  },
+
+  async getChat(requestId: string): Promise<{ conversation: any; messages: any[] }> {
+    const res = await apiClient.get<{ success: boolean; data: { conversation: any; messages: any[] } }>(`/requests/${requestId}/chat`);
+    return res.data.data;
+  },
+
+  async sendMessage(requestId: string, content: string): Promise<any> {
+    const res = await apiClient.post<{ success: boolean; data: { message: any } }>(`/requests/${requestId}/chat/messages`, { content });
+    return res.data.data.message;
+  },
+
+  async getReviews(requestId: string): Promise<any[]> {
+    const res = await apiClient.get<{ success: boolean; data: { reviews: any[] } }>(`/requests/${requestId}/reviews`);
+    return res.data.data.reviews;
+  },
+
   async review(id: string, rating: number, comment: string): Promise<any> {
-    const res = await apiClient.post(`/requests/${id}/review`, { rating, comment });
+    const res = await apiClient.post(`/requests/${id}/reviews`, { rating, comment });
     return res.data.data;
   },
 };

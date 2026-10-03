@@ -4,6 +4,7 @@ import requestRoutes from './request.routes.js';
 import userRoutes from './user.routes.js';
 import activityRoutes from './activity.routes.js';
 import communityRoutes from './community.routes.js';
+import notificationRoutes from './notification.routes.js';
 
 const router = Router();
 
@@ -12,5 +13,6 @@ router.use('/requests', requestRoutes);
 router.use('/users', userRoutes);
 router.use('/activity', activityRoutes);
 router.use('/community', communityRoutes);
+router.use('/notifications', notificationRoutes);
 
 export default router;

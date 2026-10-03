@@ -4,14 +4,18 @@ import { Textarea } from './Textarea';
 import { Star, X, CheckCircle2 } from 'lucide-react';
 
 interface RatingModalProps {
+  title?: string;
   otherPartyName: string;
+  role?: 'helper' | 'requester';
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (rating: number, review: string) => void;
+  onSubmit: (rating: number, review: string) => Promise<void> | void;
 }
 
 export const RatingModal: React.FC<RatingModalProps> = ({
+  title,
   otherPartyName,
+  role = 'helper',
   isOpen,
   onClose,
   onSubmit,
@@ -20,16 +24,33 @@ export const RatingModal: React.FC<RatingModalProps> = ({
   const [hoverRating, setHoverRating] = useState(0);
   const [review, setReview] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const defaultTitle = role === 'helper' ? 'RATE YOUR HELPER' : 'RATE YOUR REQUESTER';
+  const defaultPrompt =
+    role === 'helper'
+      ? `Rate your experience receiving help from ${otherPartyName}.`
+      : `Rate your experience helping ${otherPartyName}.`;
+  const defaultPlaceholder =
+    role === 'helper'
+      ? 'How was their help? (e.g. Prompt, friendly, very helpful with the task...)'
+      : 'How was your experience helping them? (e.g. Great communication, clear instructions...)';
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
-    onSubmit(rating, review);
-    setTimeout(() => {
-      onClose();
-    }, 1200);
+    setSubmitting(true);
+    try {
+      await onSubmit(rating, review);
+      setSubmitted(true);
+      setTimeout(() => {
+        setSubmitted(false);
+        onClose();
+      }, 1200);
+    } catch {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -38,6 +59,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
         
         <button
           onClick={onClose}
+          disabled={submitting}
           className="absolute top-4 right-4 p-2 text-muted-gray hover:text-charcoal rounded-full"
         >
           <X className="w-5 h-5" />
@@ -57,9 +79,11 @@ export const RatingModal: React.FC<RatingModalProps> = ({
               <span className="text-xs font-bold uppercase tracking-widest text-muted-gray block mb-1">
                 COMMUNITY FEEDBACK
               </span>
-              <h3 className="text-2xl font-bold font-heading text-charcoal">HOW DID IT GO?</h3>
+              <h3 className="text-2xl font-bold font-heading text-charcoal">
+                {title || defaultTitle}
+              </h3>
               <p className="text-xs text-muted-gray font-sans mt-1">
-                Rate your experience helping with <strong className="text-charcoal">{otherPartyName}</strong>.
+                {defaultPrompt}
               </p>
             </div>
 
@@ -86,18 +110,19 @@ export const RatingModal: React.FC<RatingModalProps> = ({
             </div>
 
             <Textarea
-              placeholder="Write a short review about how prompt and friendly your neighbor was..."
+              placeholder={defaultPlaceholder}
               value={review}
               onChange={(e) => setReview(e.target.value)}
               rows={3}
+              required
             />
 
             <div className="flex items-center justify-end gap-3 pt-2">
-              <Button type="button" variant="secondary" onClick={onClose}>
+              <Button type="button" variant="secondary" onClick={onClose} disabled={submitting}>
                 Skip for now
               </Button>
-              <Button type="submit" variant="lime">
-                SUBMIT RATING ★
+              <Button type="submit" variant="lime" disabled={submitting}>
+                {submitting ? 'Submitting...' : 'SUBMIT REVIEW ★'}
               </Button>
             </div>
           </form>

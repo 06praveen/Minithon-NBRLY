@@ -67,11 +67,11 @@ export const CreateRequest: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
 
-    const newReq = createRequest({
+    const newReq = await createRequest({
       title,
       description,
       category,
@@ -232,10 +232,11 @@ export const CreateRequest: React.FC = () => {
               </div>
             </div>
 
-            {/* Neighborhood & Time */}
+            {/* Location / Neighborhood & Time */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label="Neighborhood *"
+                label="Location / Neighborhood *"
+                placeholder="e.g. Bandra West, Mumbai"
                 value={neighborhood}
                 onChange={(e) => setNeighborhood(e.target.value)}
                 error={errors.neighborhood}

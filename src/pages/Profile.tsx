@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useRequests, DEMO_USERS } from '../context/RequestContext';
+import { usersApi } from '../api/users';
 import { BADGE_DEFINITIONS, mockReviews } from '../data/mockData';
 import { Button } from '../components/ui/Button';
 import { Avatar } from '../components/ui/Avatar';
@@ -8,7 +9,7 @@ import { Card } from '../components/ui/Card';
 import { User, Review } from '../types';
 import {
   MapPin, Star, ArrowLeft, Calendar, Edit3, X, Plus,
-  HeartHandshake, Users, Zap, Award, Lock,
+  HeartHandshake, Users, Zap, Award, Lock, AlertCircle,
 } from 'lucide-react';
 
 // ─── Rating Distribution Bar ────────────────────────────────
@@ -53,14 +54,16 @@ const BadgeIcon: React.FC<{ icon: string; earned: boolean }> = ({ icon, earned }
 // ─── Edit Profile Modal ────────────────────────────────
 const EditProfileModal: React.FC<{
   user: User;
-  onSave: (updates: Partial<User>) => void;
+  onSave: (updates: Partial<User>) => Promise<any> | void;
   onClose: () => void;
 }> = ({ user, onSave, onClose }) => {
   const [name, setName] = useState(user.name);
   const [bio, setBio] = useState(user.bio);
-  const [neighborhood, setNeighborhood] = useState(user.neighborhood);
-  const [skills, setSkills] = useState<string[]>([...user.skills]);
+  const [neighborhood, setNeighborhood] = useState(user.locationName || user.neighborhood);
+  const [skills, setSkills] = useState<string[]>([...(user.skills || [])]);
   const [newSkill, setNewSkill] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const handleAddSkill = () => {
     const s = newSkill.trim();
@@ -74,9 +77,18 @@ const EditProfileModal: React.FC<{
     setSkills(skills.filter((s) => s !== skill));
   };
 
-  const handleSave = () => {
-    onSave({ name, bio, neighborhood, skills });
-    onClose();
+  const handleSave = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      await onSave({ name, bio, neighborhood, skills });
+      onClose();
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || "Couldn't find that location. Try entering a nearby area or neighborhood.";
+      setError(msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -84,10 +96,17 @@ const EditProfileModal: React.FC<{
       <div className="bg-white border border-nbrly-border rounded-panel max-w-lg w-full p-6 shadow-lifted space-y-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold font-heading text-charcoal">EDIT PROFILE</h2>
-          <button onClick={onClose} className="p-1 hover:bg-paper rounded-button transition-colors">
+          <button onClick={onClose} disabled={saving} className="p-1 hover:bg-paper rounded-button transition-colors">
             <X className="w-5 h-5 text-charcoal" />
           </button>
         </div>
+
+        {error && (
+          <div className="p-3 bg-red-50 border border-urgent-red/30 rounded-button text-xs text-urgent-red flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
 
         <div className="space-y-4">
           <div>
@@ -110,12 +129,14 @@ const EditProfileModal: React.FC<{
           </div>
 
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-muted-gray block mb-1.5">Neighborhood</label>
+            <label className="text-xs font-bold uppercase tracking-wider text-muted-gray block mb-1.5">Location / Neighborhood</label>
             <input
               value={neighborhood}
+              placeholder="e.g. Bandra West, Mumbai"
               onChange={(e) => setNeighborhood(e.target.value)}
               className="w-full px-3 py-2 text-sm border border-nbrly-border rounded-button bg-paper text-charcoal focus:outline-none focus:border-charcoal transition-colors"
             />
+            <p className="text-[11px] text-muted-gray mt-1">Coordinates are automatically geocoded on save.</p>
           </div>
 
           <div>
@@ -146,8 +167,17 @@ const EditProfileModal: React.FC<{
         </div>
 
         <div className="flex justify-end gap-3 pt-2 border-t border-nbrly-border">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="lime" onClick={handleSave}>Save Changes</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="lime" onClick={handleSave} disabled={saving}>
+            {saving ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3.5 h-3.5 rounded-full border-2 border-charcoal border-t-transparent animate-spin" />
+                SAVING...
+              </span>
+            ) : (
+              'Save Changes'
+            )}
+          </Button>
         </div>
       </div>
     </div>
@@ -159,45 +189,53 @@ export const Profile: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { currentUser, updateUser, activities } = useRequests();
+
+  const [publicUser, setPublicUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
   const [editOpen, setEditOpen] = useState(false);
 
-  // Determine if viewing own profile or another user
   const isOwnProfile = !id || id === currentUser.id;
-  let user: User;
 
-  if (isOwnProfile) {
-    user = currentUser;
-  } else {
-    const found = DEMO_USERS.find((u) => u.id === id);
-    if (!found) {
-      return (
-        <div className="text-center py-20 space-y-4">
-          <p className="text-xl font-bold font-heading text-charcoal">NEIGHBOR NOT FOUND</p>
-          <p className="text-sm text-muted-gray">This profile doesn't exist.</p>
-          <Button variant="secondary" onClick={() => navigate('/')}>Back to Home</Button>
-        </div>
-      );
+  // Fetch live public user profile if viewing another neighbor
+  useEffect(() => {
+    let isMounted = true;
+    if (!isOwnProfile && id) {
+      setLoading(true);
+      usersApi.getPublicProfile(id)
+        .then((u) => {
+          if (isMounted) setPublicUser(u);
+        })
+        .catch(() => {
+          // fallback to demo users
+          const found = DEMO_USERS.find((u) => u.id === id);
+          if (isMounted && found) setPublicUser(found);
+        })
+        .finally(() => {
+          if (isMounted) setLoading(false);
+        });
     }
-    user = { ...found, badges: BADGE_DEFINITIONS.filter((b) => {
-      switch (b.id) {
-        case 'bdg_01': return found.completedHelps >= 1;
-        case 'bdg_02': return found.completedHelps >= 5;
-        case 'bdg_03': return found.completedHelps >= 1;
-        case 'bdg_04': return found.completedHelps >= 10;
-        case 'bdg_05': return found.rating >= 4.8 && found.completedHelps >= 10;
-        default: return false;
-      }
-    }).map((b) => ({ ...b, earnedAt: '2026-09-01' })) };
+    return () => { isMounted = false; };
+  }, [id, isOwnProfile]);
+
+  if (loading) {
+    return (
+      <div className="py-20 text-center space-y-3">
+        <div className="w-8 h-8 rounded-full border-2 border-charcoal border-t-lime animate-spin mx-auto" />
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-gray">Loading profile...</p>
+      </div>
+    );
   }
 
-  // Reviews — use stored reviews or mock
-  const reviews: Review[] = user.reviews || mockReviews;
+  const user: User = isOwnProfile ? currentUser : (publicUser || DEMO_USERS.find((u) => u.id === id) || currentUser);
+
+  // Reviews — use real user reviews from PostgreSQL or fallback
+  const reviews: Review[] = user.reviews && user.reviews.length > 0 ? user.reviews : mockReviews;
 
   // Trust calculations
   const completedCount = user.completedHelps;
   const acceptedTotal = completedCount + activities.filter((a) => a.role === 'helping' && a.status !== 'COMPLETED' && a.status !== 'CANCELLED').length;
   const completionRate = acceptedTotal > 0 ? Math.round((completedCount / acceptedTotal) * 100) : 100;
-  const peopleHelped = Math.max(completedCount - 5, completedCount); // Slightly different metric
+  const peopleHelped = Math.max(completedCount - 5, completedCount);
 
   return (
     <div className="space-y-8 pb-12">
@@ -263,7 +301,7 @@ export const Profile: React.FC = () => {
           <div className="space-y-3">
             <h2 className="text-xs font-bold uppercase tracking-widest text-muted-gray">WHAT I CAN HELP WITH</h2>
             <div className="flex flex-wrap gap-2">
-              {user.skills.map((skill) => (
+              {(user.skills || []).map((skill) => (
                 <span
                   key={skill}
                   className="px-3 py-1.5 bg-white text-charcoal text-xs font-semibold rounded-button border border-nbrly-border hover:border-charcoal/40 transition-colors"
@@ -287,7 +325,7 @@ export const Profile: React.FC = () => {
             <h2 className="text-xs font-bold uppercase tracking-widest text-muted-gray">COMMUNITY BADGES</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {BADGE_DEFINITIONS.map((def) => {
-                const earned = user.badges.some((b) => b.id === def.id);
+                const earned = (user.badges || []).some((b) => b.id === def.id || (b as any).code === def.id || b.name.toLowerCase() === def.name.toLowerCase());
                 return (
                   <div
                     key={def.id}
@@ -375,7 +413,7 @@ export const Profile: React.FC = () => {
                   </div>
                   <p className="text-sm text-charcoal font-sans leading-relaxed">"{review.text}"</p>
                   <div className="flex items-center gap-2 pt-1">
-                    <Avatar src={review.reviewerAvatar} name={review.reviewerName} size="sm" />
+                    <Avatar src={review.reviewerAvatar || ''} name={review.reviewerName || 'Neighbor'} size="sm" />
                     <div className="text-xs">
                       <span className="font-semibold text-charcoal">— {review.reviewerName}</span>
                       <span className="text-muted-gray ml-2">{review.date}</span>

@@ -1,5 +1,6 @@
 import { prisma } from '../config/db.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { LocationService } from './location.service.js';
 
 export class UserBadgeService {
   static async evaluateBadges(user: { id: string; completedHelps: number; rating: number }) {
@@ -61,6 +62,9 @@ export class UserService {
       name: user.name,
       avatar: user.avatar,
       neighborhood: user.neighborhood,
+      locationName: user.locationName || `${user.neighborhood}, Mumbai`,
+      latitude: user.latitude,
+      longitude: user.longitude,
       bio: user.bio,
       rating: user.rating,
       completedHelps: user.completedHelps,
@@ -90,16 +94,47 @@ export class UserService {
     name?: string;
     bio?: string;
     neighborhood?: string;
+    locationName?: string;
+    latitude?: number;
+    longitude?: number;
     skills?: string[];
     avatar?: string;
   }) {
+    let updateLocationName: string | undefined = undefined;
+    let updateLat: number | undefined = data.latitude;
+    let updateLng: number | undefined = data.longitude;
+
+    // If location or neighborhood is provided, geocode to ensure complete alignment
+    const locQuery = (data.locationName || data.neighborhood || '').trim();
+    if (locQuery) {
+      const geocoded = await LocationService.geocode(locQuery);
+      if (!geocoded) {
+        throw new AppError("Couldn't find that location. Try entering a nearby area or neighborhood.", 400);
+      }
+      updateLocationName = geocoded.locationName;
+      updateLat = geocoded.latitude;
+      updateLng = geocoded.longitude;
+    }
+
     // Only allow updating safe fields
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
         ...(data.name && { name: data.name.trim() }),
         ...(data.bio !== undefined && { bio: data.bio.trim() }),
-        ...(data.neighborhood && { neighborhood: data.neighborhood.trim() }),
+        ...(updateLocationName !== undefined
+          ? {
+              neighborhood: updateLocationName,
+              locationName: updateLocationName,
+              latitude: updateLat,
+              longitude: updateLng,
+            }
+          : {
+              ...(data.neighborhood && { neighborhood: data.neighborhood.trim() }),
+              ...(data.locationName && { locationName: data.locationName.trim() }),
+              ...(updateLat !== undefined && { latitude: updateLat }),
+              ...(updateLng !== undefined && { longitude: updateLng }),
+            }),
         ...(data.skills && { skills: data.skills }),
         ...(data.avatar && { avatar: data.avatar }),
       },
@@ -109,6 +144,9 @@ export class UserService {
         email: true,
         avatar: true,
         neighborhood: true,
+        locationName: true,
+        latitude: true,
+        longitude: true,
         bio: true,
         rating: true,
         completedHelps: true,

@@ -3,8 +3,9 @@ import { HelpRequest, Activity, User, RequestStatus, Category, Urgency, Communit
 import { loadStoredRequests, saveStoredRequests, loadStoredActivities, saveStoredActivities, loadStoredUser, saveStoredUser } from '../utils/storage';
 import { mockUser, mockCommunityActivity, BADGE_DEFINITIONS } from '../data/mockData';
 import { requestsApi } from '../api/requests';
-import { communityApi } from '../api/community';
+import { communityApi, CommunityStatsResponse } from '../api/community';
 import { activityApi } from '../api/activity';
+import { usersApi } from '../api/users';
 import { useAuth } from './AuthContext';
 
 export const DEMO_USERS: User[] = [
@@ -19,7 +20,7 @@ export const DEMO_USERS: User[] = [
     rating: 4.9,
     completedHelps: 18,
     createdHelpsCount: 2,
-    skills: ['Technology', 'Grocery / Errands', 'Healthcare'],
+    skills: ['Technology', 'Grocery / Errands', 'Healthcare / Medicine'],
     badges: [],
     joinedAt: 'Jul 2026',
   },
@@ -98,11 +99,15 @@ interface RequestContextType {
     preferredTime: string;
     reward?: string;
   }) => Promise<HelpRequest>;
-  acceptRequest: (requestId: string) => Promise<void>;
-  startRequest: (requestId: string) => Promise<void>;
+  acceptRequest: (requestId: string) => Promise<HelpRequest>;
+  startRequest: (requestId: string) => Promise<HelpRequest>;
+  requestCompletion: (requestId: string) => Promise<HelpRequest>;
+  confirmCompletion: (requestId: string) => Promise<HelpRequest>;
+  rejectCompletion: (requestId: string) => Promise<HelpRequest>;
+  submitReview: (requestId: string, rating: number, comment: string) => Promise<void>;
   completeRequest: (requestId: string, rating?: number, review?: string) => Promise<void>;
-  cancelRequest: (requestId: string) => Promise<void>;
-  updateUser: (updates: Partial<User>) => void;
+  cancelRequest: (requestId: string) => Promise<HelpRequest>;
+  updateUser: (updates: Partial<User>) => Promise<User>;
   switchUser: (userId: string) => void;
   clearToast: () => void;
   getUserById: (userId: string) => User | undefined;
@@ -121,7 +126,7 @@ interface RequestContextType {
 const RequestContext = createContext<RequestContextType | undefined>(undefined);
 
 export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user: authUser } = useAuth();
+  const { user: authUser, refreshUser } = useAuth();
 
   const [requests, setRequests] = useState<HelpRequest[]>(loadStoredRequests);
   const [activities, setActivities] = useState<Activity[]>(loadStoredActivities);
@@ -131,6 +136,7 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
 
   const [communityActivity, setCommunityActivity] = useState<CommunityActivity[]>(mockCommunityActivity);
+  const [liveStats, setLiveStats] = useState<CommunityStatsResponse | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   // Sync auth context user when changed
@@ -141,7 +147,7 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [authUser]);
 
-  // Initial backend sync on load
+  // Initial and on-action backend sync from PostgreSQL
   const refreshAll = useCallback(async () => {
     try {
       // 1. Fetch live requests from API
@@ -157,7 +163,13 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setCommunityActivity(liveCommunity);
       }
 
-      // 3. Fetch live user activity if authenticated
+      // 3. Fetch live community stats
+      const statsRes = await communityApi.getStats();
+      if (statsRes) {
+        setLiveStats(statsRes);
+      }
+
+      // 4. Fetch live user activity if authenticated
       if (localStorage.getItem('nbrly_token')) {
         const liveUserActivities = await activityApi.getMyActivity();
         if (liveUserActivities && liveUserActivities.length > 0) {
@@ -212,16 +224,21 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
     showToast(`Switched demo account to ${target.name} (${target.neighborhood})`, 'info');
   };
 
-  const updateUser = useCallback((updates: Partial<User>) => {
-    setCurrentUser((prev) => {
-      const sanitized = { ...updates };
-      delete (sanitized as any).rating;
-      delete (sanitized as any).completedHelps;
-      delete (sanitized as any).badges;
-      return { ...prev, ...sanitized };
-    });
-    showToast('Profile updated successfully.', 'success');
-  }, []);
+  const updateUser = useCallback(async (updates: Partial<User>): Promise<User> => {
+    try {
+      const updated = await usersApi.updateMyProfile(updates);
+      setCurrentUser(updated);
+      saveStoredUser(updated);
+      await refreshUser();
+      await refreshAll();
+      showToast('Profile updated successfully.', 'success');
+      return updated;
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || 'Failed to update profile location.';
+      showToast(msg, 'error');
+      throw err;
+    }
+  }, [refreshUser, refreshAll]);
 
   const getUserById = useCallback((userId: string): User | undefined => {
     if (currentUser.id === userId) return currentUser;
@@ -305,127 +322,158 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     showToast('Your help request has been published to the neighborhood.', 'success');
+    
+    // Live refresh from PostgreSQL
+    refreshAll();
+
     return newRequest;
   };
 
-  const acceptRequest = async (requestId: string) => {
+  const acceptRequest = async (requestId: string): Promise<HelpRequest> => {
     try {
-      await requestsApi.accept(requestId);
-    } catch {
-      // continue with optimistic update
+      const updated = await requestsApi.accept(requestId);
+      setRequests((prev) => prev.map((req) => (req.id === requestId ? updated : req)));
+
+      const newActivity: Activity = {
+        id: `act_${Date.now()}`,
+        requestId,
+        requestTitle: updated.title || 'Help Request',
+        category: updated.category || 'Technology',
+        urgency: updated.urgency || 'TODAY',
+        neighborhood: updated.neighborhood || currentUser.neighborhood,
+        role: 'helping',
+        status: 'ACCEPTED',
+        updatedAt: 'Just now',
+        otherPartyName: updated.requester?.name || 'Neighbor',
+      };
+
+      setActivities((prev) => [newActivity, ...prev.filter((a) => a.requestId !== requestId)]);
+
+      addCommunityEvent({
+        type: 'HELP_ACCEPTED',
+        userName: currentUser.name,
+        targetName: updated.requester?.name,
+        requestTitle: updated.title,
+        timestamp: 'Just now',
+      });
+
+      showToast(`You accepted to help with: ${updated.title || 'Request'}`, 'success');
+      refreshAll();
+      return updated;
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Unable to accept this help request.';
+      showToast(msg, 'error');
+      throw err;
     }
-
-    const targetReq = requests.find((r) => r.id === requestId);
-
-    setRequests((prev) =>
-      prev.map((req) => (req.id === requestId ? { ...req, status: 'ACCEPTED' as RequestStatus } : req))
-    );
-
-    const newActivity: Activity = {
-      id: `act_${Date.now()}`,
-      requestId,
-      requestTitle: targetReq?.title || 'Help Request',
-      category: targetReq?.category || 'Healthcare / Medicine',
-      urgency: targetReq?.urgency || 'TODAY',
-      neighborhood: targetReq?.neighborhood || currentUser.neighborhood,
-      role: 'helping',
-      status: 'ACCEPTED',
-      updatedAt: 'Just now',
-      otherPartyName: targetReq?.requester.name || 'Neighbor',
-    };
-
-    setActivities((prev) => [newActivity, ...prev.filter((a) => a.requestId !== requestId)]);
-
-    addCommunityEvent({
-      type: 'HELP_ACCEPTED',
-      userName: currentUser.name,
-      targetName: targetReq?.requester.name,
-      requestTitle: targetReq?.title,
-      timestamp: 'Just now',
-    });
-
-    showToast(`You accepted to help with: ${targetReq?.title || 'Request'}`, 'success');
   };
 
-  const startRequest = async (requestId: string) => {
+  const startRequest = async (requestId: string): Promise<HelpRequest> => {
     try {
-      await requestsApi.start(requestId);
-    } catch {
-      // continue with optimistic update
+      const updated = await requestsApi.start(requestId);
+      setRequests((prev) => prev.map((req) => (req.id === requestId ? updated : req)));
+
+      setActivities((prev) =>
+        prev.map((act) =>
+          act.requestId === requestId ? { ...act, status: 'IN_PROGRESS' as RequestStatus, updatedAt: 'Just now' } : act
+        )
+      );
+
+      showToast(`Task started! Status is now IN PROGRESS.`, 'info');
+      refreshAll();
+      return updated;
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Unable to start this help.';
+      showToast(msg, 'error');
+      throw err;
     }
+  };
 
-    setRequests((prev) =>
-      prev.map((req) => (req.id === requestId ? { ...req, status: 'IN_PROGRESS' as RequestStatus } : req))
-    );
+  const requestCompletion = async (requestId: string): Promise<HelpRequest> => {
+    try {
+      const updated = await requestsApi.requestCompletion(requestId);
+      setRequests((prev) => prev.map((req) => (req.id === requestId ? updated : req)));
 
-    setActivities((prev) =>
-      prev.map((act) =>
-        act.requestId === requestId ? { ...act, status: 'IN_PROGRESS' as RequestStatus, updatedAt: 'Just now' } : act
-      )
-    );
+      showToast('Completion requested! Waiting for neighbor confirmation.', 'info');
+      refreshAll();
+      return updated;
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Unable to request completion.';
+      showToast(msg, 'error');
+      throw err;
+    }
+  };
 
-    showToast(`Task started! Status is now IN PROGRESS.`, 'info');
+  const confirmCompletion = async (requestId: string): Promise<HelpRequest> => {
+    try {
+      const updated = await requestsApi.confirmCompletion(requestId);
+      setRequests((prev) => prev.map((req) => (req.id === requestId ? updated : req)));
+
+      setActivities((prev) =>
+        prev.map((act) =>
+          act.requestId === requestId ? { ...act, status: 'COMPLETED' as RequestStatus, updatedAt: 'Just now' } : act
+        )
+      );
+
+      if (updated.helper && updated.helper.id === currentUser.id) {
+        setCurrentUser((prev) => ({ ...prev, completedHelps: prev.completedHelps + 1 }));
+      }
+
+      addCommunityEvent({
+        type: 'HELP_COMPLETED',
+        userName: updated.helper?.name || currentUser.name,
+        targetName: updated.requester?.name,
+        requestTitle: updated.title,
+        timestamp: 'Just now',
+      });
+
+      showToast('Help confirmed as completed! You can now rate your neighbor.', 'success');
+      refreshAll();
+      return updated;
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Unable to confirm completion.';
+      showToast(msg, 'error');
+      throw err;
+    }
+  };
+
+  const rejectCompletion = async (requestId: string): Promise<HelpRequest> => {
+    try {
+      const updated = await requestsApi.rejectCompletion(requestId);
+      setRequests((prev) => prev.map((req) => (req.id === requestId ? updated : req)));
+
+      showToast('Help is still marked as in progress.', 'info');
+      refreshAll();
+      return updated;
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Unable to reject completion.';
+      showToast(msg, 'error');
+      throw err;
+    }
+  };
+
+  const submitReview = async (requestId: string, rating: number, comment: string) => {
+    await requestsApi.review(requestId, rating, comment);
+    showToast(`Thank you! ${rating}★ review submitted.`, 'success');
+    await refreshAll();
   };
 
   const completeRequest = async (requestId: string, rating?: number, review?: string) => {
-    try {
-      await requestsApi.complete(requestId);
-      if (rating && review) {
-        await requestsApi.review(requestId, rating, review);
-      }
-    } catch {
-      // continue with optimistic update
+    await confirmCompletion(requestId);
+    if (rating && review) {
+      await submitReview(requestId, rating, review);
     }
-
-    setRequests((prev) =>
-      prev.map((req) => (req.id === requestId ? { ...req, status: 'COMPLETED' as RequestStatus } : req))
-    );
-
-    setActivities((prev) =>
-      prev.map((act) =>
-        act.requestId === requestId ? { ...act, status: 'COMPLETED' as RequestStatus, updatedAt: 'Just now' } : act
-      )
-    );
-
-    const req = requests.find((r) => r.id === requestId);
-    setCurrentUser((prev) => ({ ...prev, completedHelps: prev.completedHelps + 1 }));
-
-    addCommunityEvent({
-      type: 'HELP_COMPLETED',
-      userName: currentUser.name,
-      targetName: req?.requester.name,
-      requestTitle: req?.title,
-      timestamp: 'Just now',
-    });
-
-    if (review && rating) {
-      const newReview: any = {
-        id: `rev_${Date.now()}`,
-        reviewerName: currentUser.name,
-        reviewerAvatar: currentUser.avatar,
-        rating,
-        text: review,
-        date: 'Just now',
-      };
-      setCurrentUser((prev) => ({
-        ...prev,
-        reviews: [newReview, ...(prev.reviews || [])],
-      }));
-    }
-
-    showToast(`Nice one! Task marked COMPLETED.${rating ? ` ${rating}★ review submitted.` : ''}`, 'success');
   };
 
-  const cancelRequest = async (requestId: string) => {
+  const cancelRequest = async (requestId: string): Promise<HelpRequest> => {
+    let updated: HelpRequest;
     try {
-      await requestsApi.cancel(requestId);
+      updated = await requestsApi.cancel(requestId);
     } catch {
-      // continue with optimistic update
+      const targetReq = requests.find((r) => r.id === requestId);
+      updated = { ...(targetReq || ({} as HelpRequest)), status: 'CANCELLED' };
     }
 
-    setRequests((prev) =>
-      prev.map((req) => (req.id === requestId ? { ...req, status: 'CANCELLED' as RequestStatus } : req))
-    );
+    setRequests((prev) => prev.map((req) => (req.id === requestId ? updated : req)));
 
     setActivities((prev) =>
       prev.map((act) =>
@@ -434,9 +482,11 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
     );
 
     showToast(`Help request has been CANCELLED.`, 'warning');
+    refreshAll();
+    return updated;
   };
 
-  // Derived statistics for Neighborhood Pulse
+  // Derived / Live statistics for Neighborhood Pulse
   const categoryCounts: Record<string, number> = {};
   requests.forEach((r) => {
     categoryCounts[r.category] = (categoryCounts[r.category] || 0) + 1;
@@ -444,13 +494,13 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const sortedCategories = Object.entries(categoryCounts).sort(([, a], [, b]) => b - a);
 
   const stats = {
-    openRequests: requests.filter((r) => r.status === 'OPEN').length,
-    activeHelpers: activities.filter((a) => a.role === 'helping' && a.status !== 'COMPLETED').length + 8,
-    completedHelps: requests.filter((r) => r.status === 'COMPLETED').length + 32,
-    activeCategories: new Set(requests.map((r) => r.category)).size,
-    mostRequestedCategory: sortedCategories[0]?.[0] || 'Healthcare / Medicine',
-    mostActiveCategory: sortedCategories[1]?.[0] || 'Technology',
-    peakTime: '6 PM – 8 PM',
+    openRequests: liveStats?.openRequests ?? requests.filter((r) => r.status === 'OPEN').length,
+    activeHelpers: liveStats?.activeHelpers ?? activities.filter((a) => a.role === 'helping' && a.status !== 'COMPLETED').length + 8,
+    completedHelps: liveStats?.completedHelps ?? requests.filter((r) => r.status === 'COMPLETED').length + 32,
+    activeCategories: liveStats?.activeCategories ?? new Set(requests.map((r) => r.category)).size,
+    mostRequestedCategory: liveStats?.mostRequestedCategory || sortedCategories[0]?.[0] || 'Healthcare / Medicine',
+    mostActiveCategory: liveStats?.mostActiveCategory || sortedCategories[1]?.[0] || 'Technology',
+    peakTime: liveStats?.peakTime || '6 PM – 8 PM',
   };
 
   return (
@@ -464,6 +514,10 @@ export const RequestProvider: React.FC<{ children: React.ReactNode }> = ({ child
         createRequest,
         acceptRequest,
         startRequest,
+        requestCompletion,
+        confirmCompletion,
+        rejectCompletion,
+        submitReview,
         completeRequest,
         cancelRequest,
         updateUser,

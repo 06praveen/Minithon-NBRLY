@@ -12,10 +12,15 @@ export class RequestController {
       if (req.user) {
         const u = await prisma.user.findUnique({
           where: { id: req.user.id },
-          select: { id: true, neighborhood: true, skills: true },
+          select: { id: true, neighborhood: true, skills: true, latitude: true, longitude: true },
         });
         if (u) currentUser = u;
       }
+
+      const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+      const lng = req.query.lng ? parseFloat(req.query.lng as string) : undefined;
+      const radius = req.query.radius ? parseFloat(req.query.radius as string) : undefined;
+      const sortBy = req.query.sortBy as any;
 
       const requests = await RequestService.listRequests({
         search: req.query.search as string,
@@ -23,6 +28,10 @@ export class RequestController {
         urgency: req.query.urgency as string,
         neighborhood: req.query.neighborhood as string,
         status: req.query.status as string,
+        lat: !isNaN(lat!) ? lat : undefined,
+        lng: !isNaN(lng!) ? lng : undefined,
+        radius: !isNaN(radius!) ? radius : undefined,
+        sortBy,
         currentUser,
       });
 
@@ -41,7 +50,7 @@ export class RequestController {
       if (req.user) {
         const u = await prisma.user.findUnique({
           where: { id: req.user.id },
-          select: { id: true, neighborhood: true, skills: true },
+          select: { id: true, neighborhood: true, skills: true, latitude: true, longitude: true },
         });
         if (u) currentUser = u;
       }
@@ -103,12 +112,16 @@ export class RequestController {
 
   static async accept(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const request = await RequestService.accept(req.user!.id, req.params.id);
+      const result = await RequestService.accept(req.user!.id, req.params.id);
 
       res.status(200).json({
         success: true,
         message: 'Help request accepted.',
-        data: { request },
+        data: {
+          request: result.request,
+          assignment: result.assignment,
+          conversation: result.conversation,
+        },
       });
     } catch (err) {
       next(err);
@@ -129,14 +142,55 @@ export class RequestController {
     }
   }
 
-  static async complete(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  static async requestCompletion(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const request = await RequestService.complete(req.user!.id, req.params.id);
+      const request = await RequestService.requestCompletion(req.user!.id, req.params.id);
 
       res.status(200).json({
         success: true,
-        message: 'Help request marked as completed.',
+        message: 'Completion requested. Waiting for requester confirmation.',
         data: { request },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async confirmCompletion(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const request = await RequestService.confirmCompletion(req.user!.id, req.params.id);
+
+      res.status(200).json({
+        success: true,
+        message: 'Help completion confirmed! You can now review your helper.',
+        data: { request },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async rejectCompletion(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const request = await RequestService.rejectCompletion(req.user!.id, req.params.id);
+
+      res.status(200).json({
+        success: true,
+        message: 'Completion postponed. Request remains in progress.',
+        data: { request },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async getReviews(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const reviews = await ReviewService.getReviewsByRequest(req.params.id);
+
+      res.status(200).json({
+        success: true,
+        data: { reviews },
       });
     } catch (err) {
       next(err);
